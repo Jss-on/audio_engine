@@ -1,6 +1,6 @@
 from __future__ import division, print_function
 import numpy as np
-from audio_engine import sigproc
+from .sigproc import preemphasis, framesig, powspec
 from scipy.fftpack import dct
 
 def calculate_nfft(samplerate, winlen):
@@ -40,9 +40,9 @@ def fbank(signal, samplerate=16000, winlen=0.025, winstep=0.01, nfilt=26,
     Compute Mel-filterbank energy features from an audio signal.
     """
     highfreq = highfreq or samplerate / 2
-    signal = sigproc.preemphasis(signal, preemph)
-    frames = sigproc.framesig(signal, winlen * samplerate, winstep * samplerate, winfunc)
-    pspec = sigproc.powspec(frames, nfft)
+    signal = preemphasis(signal, preemph)
+    frames = framesig(signal, winlen * samplerate, winstep * samplerate, winfunc)
+    pspec = powspec(frames, nfft)
     energy = np.sum(pspec, 1)  # Total energy in each frame
     energy = np.where(energy == 0, np.finfo(float).eps, energy)  # Avoid log of zero
 
@@ -51,6 +51,34 @@ def fbank(signal, samplerate=16000, winlen=0.025, winstep=0.01, nfilt=26,
     feat = np.where(feat == 0, np.finfo(float).eps, feat)  # Avoid log of zero
 
     return feat, energy
+
+def logfbank(signal, samplerate=16000, winlen=0.025, winstep=0.01,
+             nfilt=26, nfft=512, lowfreq=0, highfreq=None, preemph=0.97,
+             winfunc=lambda x: np.ones((x,))):
+    if signal.size == 0:
+        return np.empty((0, nfilt))
+    
+    feat, _ = fbank(signal, samplerate, winlen, winstep, nfilt, nfft,
+                    lowfreq, highfreq, preemph, winfunc)
+    return np.log(np.where(feat == 0, np.finfo(float).eps, feat))
+
+def ssc(signal, samplerate=16000, winlen=0.025, winstep=0.01,
+        nfilt=26, nfft=512, lowfreq=0, highfreq=None, preemph=0.97,
+        winfunc=lambda x: np.ones((x,))):
+    if signal.size == 0:
+        return np.empty((0, nfilt))
+
+    highfreq = highfreq or samplerate / 2
+    signal = preemphasis(signal, preemph)
+    frames = framesig(signal, winlen * samplerate, winstep * samplerate, winfunc)
+    pspec = powspec(frames, nfft)
+    pspec[pspec == 0] = np.finfo(float).eps  # Avoid log of zero
+
+    fb = get_filterbanks(nfilt, nfft, samplerate, lowfreq, highfreq)
+    feat = np.dot(pspec, fb.T)
+    R = np.tile(np.linspace(1, samplerate / 2, np.size(pspec, 1)), (np.size(pspec, 0), 1))
+
+    return np.dot(pspec * R, fb.T) / feat
 
 def get_filterbanks(nfilt=20, nfft=512, samplerate=16000, lowfreq=0, highfreq=None):
     """
